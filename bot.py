@@ -2,17 +2,17 @@ import json
 import os
 from uuid import uuid4
 from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
-
-from fastapi import FastAPI
+from telegram.ext import (
+    ApplicationBuilder, CommandHandler, MessageHandler,
+    ContextTypes, filters, Application
+)
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-import asyncio
 from dotenv import load_dotenv
+from contextlib import asynccontextmanager
 
-# Load environment variables from .env file
 load_dotenv()
 
-# Load or initialize media database
 MEDIA_DB_FILE = "media_db.json"
 if os.path.exists(MEDIA_DB_FILE):
     with open(MEDIA_DB_FILE, "r") as f:
@@ -20,14 +20,13 @@ if os.path.exists(MEDIA_DB_FILE):
 else:
     media_db = []
 
-# Save to file
 def save_db():
     with open(MEDIA_DB_FILE, "w") as f:
         json.dump(media_db, f, indent=2)
 
-# Telegram Bot Setup using environment variable
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
+# --- Telegram Bot Handlers ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Hi! Send media with a caption. Use /search <keyword> to search.")
 
@@ -66,32 +65,57 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     query = " ".join(context.args).lower()
-    results = [item for item in media_db if query in item["description"].lower()]
+    results = [item for item in media_db if "description" in item and query in item["description"].lower()]
 
     if results:
         for item in results:
             try:
-                if item["media_type"] == "photo":
-                    await update.message.reply_photo(item["file_id"], caption=item["description"])
-                elif item["media_type"] == "video":
-                    await update.message.reply_video(item["file_id"], caption=item["description"])
-                elif item["media_type"] == "document":
-                    await update.message.reply_document(item["file_id"], caption=item["description"])
-            except:
-                await update.message.reply_text(f"(Failed to send media: {item['id']})")
+                media_type = item.get("media_type")
+                file_id = item.get("file_id")
+                caption = item.get("description", "")
+                if not media_type or not file_id:
+                    continue  # skip invalid entries
+                
+                if media_type == "photo":
+                    await update.message.reply_photo(file_id, caption=caption)
+                elif media_type == "video":
+                    await update.message.reply_video(file_id, caption=caption)
+                elif media_type == "document":
+                    await update.message.reply_document(file_id, caption=caption)
+                else:
+                    await update.message.reply_text(f"Unsupported media type: {media_type}")
+            except Exception:
+                entry_id = item.get("id", "unknown")
+                await update.message.reply_text(f"(Failed to send media: {entry_id})")
     else:
         await update.message.reply_text("No matching media found.")
 
-# Run the Telegram bot in an async loop
-async def run_telegram_bot():
-    app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("search", search))
-    app.add_handler(MessageHandler(filters.ALL, handle_media))
-    await app.run_polling()
+# --- App Setup ---
+bot_app: Application = None
 
-# FastAPI App (renamed to `app` for Render compatibility)
-app = FastAPI()
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global bot_app
+    bot_app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
+
+    bot_app.add_handler(CommandHandler("start", start))
+    bot_app.add_handler(CommandHandler("search", search))
+    bot_app.add_handler(MessageHandler(filters.ALL, handle_media))
+
+    await bot_app.initialize()
+    await bot_app.start()
+    await bot_app.updater.start_polling()
+
+    print("✅ Telegram bot polling started")
+
+    yield
+
+    print("⏹️ Telegram bot polling stopping")
+    await bot_app.updater.stop()
+    await bot_app.stop()
+    await bot_app.shutdown()
+
+app = FastAPI(lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -99,7 +123,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-# Add this root route here
+
+# --- FastAPI Routes ---
 @app.get("/")
 def root():
     return {"message": "Telegram media bot API is running!"}
@@ -112,12 +137,3 @@ def get_all_media():
 def search_media(q: str):
     query = q.lower()
     return [item for item in media_db if query in item["description"].lower()]
-
-# Start both bot and API
-if __name__ == "__main__":
-    import uvicorn
-
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.create_task(run_telegram_bot())
-    uvicorn.run(app, host="0.0.0.0", port=8000)
