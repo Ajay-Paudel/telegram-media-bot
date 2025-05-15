@@ -99,6 +99,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# Add this root route here
+@app.get("/")
+def root():
+    return {"message": "Telegram media bot API is running!"}
 
 @app.get("/media")
 def get_all_media():
