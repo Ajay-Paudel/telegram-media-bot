@@ -6,7 +6,6 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, fil
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-import threading
 import asyncio
 from dotenv import load_dotenv
 
@@ -27,7 +26,7 @@ def save_db():
         json.dump(media_db, f, indent=2)
 
 # Telegram Bot Setup using environment variable
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")  # Get token from .env file
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Hi! Send media with a caption. Use /search <keyword> to search.")
@@ -91,31 +90,30 @@ async def run_telegram_bot():
     app.add_handler(MessageHandler(filters.ALL, handle_media))
     await app.run_polling()
 
-# FastAPI App
-api = FastAPI()
+# FastAPI App (renamed to `app` for Render compatibility)
+app = FastAPI()
 
-api.add_middleware(
+app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Change to frontend URL in production
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-@api.get("/media")
+@app.get("/media")
 def get_all_media():
     return media_db
 
-@api.get("/search")
+@app.get("/search")
 def search_media(q: str):
     query = q.lower()
     return [item for item in media_db if query in item["description"].lower()]
 
 # Start both bot and API
 if __name__ == "__main__":
-    # Run the Telegram bot and FastAPI app concurrently using asyncio
     import uvicorn
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     loop.create_task(run_telegram_bot())
-    uvicorn.run(api, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8000)
