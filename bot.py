@@ -113,7 +113,9 @@ def search_media(q: str):
 # Start both bot and API
 if __name__ == "__main__":
     # Run the Telegram bot and FastAPI app concurrently using asyncio
-    loop = asyncio.get_event_loop()
-    loop.create_task(run_telegram_bot())  # Run the bot asynchronously
     import uvicorn
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.create_task(run_telegram_bot())
     uvicorn.run(api, host="0.0.0.0", port=8000)
